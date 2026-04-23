@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: desafio-ml-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: PORT
+        value: 3000
+      - key: MONGO_URI
+        sync: false
+      - key: ML_APP_ID
+        sync: false
+      - key: ML_SECRET_KEY
+        sync: false
+      - key: ML_REDIRECT_URI
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false

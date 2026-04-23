@@ -1,0 +1,64 @@
+:root {
+  color-scheme: light;
+  --page-bg: #f3f5f8;
+  --surface-color: #ffffff;
+  --title-color: #132238;
+  --text-color: #243447;
+  --text-muted: #526072;
+  --text-soft: #7f8b99;
+  --border-color: rgba(16, 24, 40, 0.1);
+  --card-shadow: 0 20px 48px rgba(16, 24, 40, 0.08);
+  --font-body: 'Trebuchet MS', 'Segoe UI', sans-serif;
+  --font-heading: 'Arial Black', 'Trebuchet MS', sans-serif;
+  --font-mono: 'Cascadia Code', 'Consolas', monospace;
+  font-family: var(--font-body);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  color: var(--text-color);
+  background:
+    linear-gradient(180deg, rgba(255, 230, 0, 0.18), rgba(255, 230, 0, 0) 18%),
+    linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%);
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(16, 24, 40, 0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 24, 40, 0.015) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.55), transparent 78%);
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}
