@@ -423,6 +423,7 @@ function App() {
         return response.data;
       }
 
+      // O backend processa a sincronizacao em segundo plano; aqui o frontend apenas acompanha o andamento.
       await delay(SYNC_STATUS_POLL_INTERVAL_MS);
     }
   };
@@ -476,7 +477,7 @@ function App() {
     try {
       await api.delete('/auth/session');
     } catch {
-      // Intencionalmente silencioso: a sessao local sera descartada mesmo se a API falhar.
+      return;
     } finally {
       clearSessionId();
       setAuthStatus({ authenticated: false });
@@ -550,7 +551,6 @@ function App() {
   });
 
   const validateCreateAd = async (showSuccessToast = true) => {
-    // Validação local antes de chamar o backend
     if (createForm.title.trim().length < 20) {
       pushToast('error', 'Título muito curto', 'Inclua marca, modelo e características. Ex: "Notebook Dell Inspiron 15 Core i5 8GB"');
       return false;
@@ -566,7 +566,6 @@ function App() {
       return false;
     }
 
-    // Checar atributos obrigatórios não preenchidos
     const missingRequired = categoryAttributes
       .filter((attr) => attr.required && !attr.fixed)
       .filter((attr) => {
