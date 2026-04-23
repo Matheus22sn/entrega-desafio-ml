@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react';
+import { startTransition, useDeferredValue, useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import './App.css';
 import AdCreateModal from './components/AdCreateModal';
@@ -21,6 +21,7 @@ import type {
   EditAdFormState,
   FiltersState,
   ListingType,
+  SyncJobResponse,
   ToastMessage,
   ValidationIssue,
   ValidationResponse,
@@ -75,6 +76,7 @@ const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
 const SYNC_REQUEST_TIMEOUT_MS = 120_000;
 const DEFAULT_TITLE_MIN_LENGTH = 35;
 const DEFAULT_TITLE_MAX_LENGTH = 60;
+const SYNC_STATUS_POLL_INTERVAL_MS = 1500;
 
 const formatDateTime = (value?: string): string => {
   if (!value) {
@@ -96,6 +98,11 @@ const buildPicturesPayload = (value: string): string[] => {
     .map((item) => item.trim())
     .filter(Boolean);
 };
+
+const delay = async (ms: number) =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 
 const normalizeComparableText = (value: string) =>
   value
@@ -406,20 +413,40 @@ function App() {
     }
   };
 
-  const syncAds = async () => {
+  const waitForSyncCompletion = async (): Promise<SyncJobResponse> => {
+    while (true) {
+      const response = await api.get<SyncJobResponse>('/ads/sync', {
+        timeout: SYNC_REQUEST_TIMEOUT_MS,
+      });
+
+      if (response.data.status === 'completed' || response.data.status === 'failed') {
+        return response.data;
+      }
+
+      await delay(SYNC_STATUS_POLL_INTERVAL_MS);
+    }
+  };
+
+  const syncAds = async (showSuccessToast = true) => {
     setIsSyncing(true);
 
     try {
-      const response = await api.post<AdsResponse>('/ads/sync', undefined, {
+      await api.post<SyncJobResponse>('/ads/sync', undefined, {
         timeout: SYNC_REQUEST_TIMEOUT_MS,
       });
-      setAds(response.data.items);
-      setSummary(response.data.summary);
-      setLastSyncedAt(response.data.syncedAt ?? new Date().toISOString());
 
-      if (response.data.warnings && response.data.warnings.length > 0) {
-        pushToast('info', 'Sincronizacao com alertas', response.data.warnings[0]);
-      } else {
+      const job = await waitForSyncCompletion();
+
+      if (job.status === 'failed') {
+        throw new Error(job.error || 'A sincronizacao falhou no backend.');
+      }
+
+      await fetchAds(false);
+      setLastSyncedAt(job.syncedAt ?? new Date().toISOString());
+
+      if (job.warnings && job.warnings.length > 0) {
+        pushToast('info', 'Sincronizacao com alertas', job.warnings[0]);
+      } else if (showSuccessToast) {
         pushToast('success', 'Sincronizacao concluida', 'Os anuncios locais foram atualizados.');
       }
     } catch (error) {
@@ -428,6 +455,9 @@ function App() {
       setIsSyncing(false);
     }
   };
+  const runAutoSyncAfterAuth = useEffectEvent(async () => {
+    await syncAds(false);
+  });
 
   const handleConnectSeller = async () => {
     try {
@@ -959,33 +989,9 @@ function App() {
     }
 
     hasAutoSyncedFromAuth.current = true;
-    const appendToast = (tone: ToastMessage['tone'], title: string, description?: string) => {
-      const toastId = nextToastId.current;
-      nextToastId.current += 1;
-      setToasts((current) => [...current, { id: toastId, tone, title, description }]);
-    };
 
     void (async () => {
-      setIsSyncing(true);
-
-      try {
-        const response = await api.post<AdsResponse>('/ads/sync', undefined, {
-          timeout: SYNC_REQUEST_TIMEOUT_MS,
-        });
-        setAds(response.data.items);
-        setSummary(response.data.summary);
-        setLastSyncedAt(response.data.syncedAt ?? new Date().toISOString());
-
-        if (response.data.warnings && response.data.warnings.length > 0) {
-          appendToast('info', 'Sincronizacao com alertas', response.data.warnings[0]);
-        } else {
-          appendToast('success', 'Sincronizacao concluida', 'Os anuncios locais foram atualizados.');
-        }
-      } catch (error) {
-        appendToast('error', 'Falha ao sincronizar', getApiErrorMessage(error));
-      } finally {
-        setIsSyncing(false);
-      }
+      await runAutoSyncAfterAuth();
     })();
   }, [authFeedback.state, authStatus.authenticated]);
 
