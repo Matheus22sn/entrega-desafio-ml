@@ -1,5 +1,77 @@
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 import Token, { IToken } from '../models/token';
+
+// Tokens do Mercado Livre ficam cifrados no banco (AES-256-GCM).
+// A chave vem de TOKEN_ENCRYPTION_KEY ou, se ela não existir, do ML_SECRET_KEY.
+const ENCRYPTED_PREFIX = 'enc:v1:';
+
+const encryptionKey = (): Buffer => {
+  const secret = process.env.TOKEN_ENCRYPTION_KEY || process.env.ML_SECRET_KEY;
+
+  if (!secret) {
+    throw new Error('Missing TOKEN_ENCRYPTION_KEY or ML_SECRET_KEY to encrypt tokens.');
+  }
+
+  return createHash('sha256').update(`ml-token:${secret}`).digest();
+};
+
+export const encryptSecret = (plain: string): string => {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', encryptionKey(), iv);
+  const data = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+  return ENCRYPTED_PREFIX + Buffer.concat([iv, cipher.getAuthTag(), data]).toString('base64');
+};
+
+export const decryptSecret = (stored: string): string => {
+  // Tokens gravados antes da cifra continuam funcionando até o próximo refresh.
+  if (!stored.startsWith(ENCRYPTED_PREFIX)) {
+    return stored;
+  }
+
+  const raw = Buffer.from(stored.slice(ENCRYPTED_PREFIX.length), 'base64');
+  const decipher = createDecipheriv('aes-256-gcm', encryptionKey(), raw.subarray(0, 12));
+  decipher.setAuthTag(raw.subarray(12, 28));
+  return Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8');
+};
+
+// Só redireciona para os front-ends configurados (FRONTEND_URL e CORS_ORIGIN).
+export const allowedFrontendOrigins = (): string[] => {
+  const values = [process.env.FRONTEND_URL, ...(process.env.CORS_ORIGIN ?? '').split(',')];
+  const origins = values
+    .map((value) => {
+      try {
+        return value ? new URL(value.trim()).origin : '';
+      } catch {
+        return '';
+      }
+    })
+    .filter(Boolean);
+
+  return origins.length > 0 ? Array.from(new Set(origins)) : ['http://localhost:5173'];
+};
+
+export const resolveFrontendUrl = (candidate?: string | null): string => {
+  const allowed = allowedFrontendOrigins();
+
+  if (candidate) {
+    try {
+      const origin = new URL(candidate.trim()).origin;
+
+      if (allowed.includes(origin)) {
+        return origin;
+      }
+    } catch {
+      // URL inválida: cai no padrão abaixo.
+    }
+  }
+
+  return allowed[0];
+};
+
+// Detalhes internos de erro só aparecem fora de produção.
+export const publicDetails = (details: unknown): unknown =>
+  process.env.NODE_ENV === 'production' ? undefined : details;
 
 const ML_API_BASE_URL = 'https://api.mercadolibre.com';
 const TOKEN_REFRESH_THRESHOLD_MS = 60_000;
@@ -139,14 +211,15 @@ const requestWithRetry = async <T>(
 };
 
 const getStoredToken = async (userId?: string): Promise<IToken> => {
-  const token = userId
-    ? await Token.findOne({ user_id: userId })
-    : await Token.findOne().sort({ updatedAt: -1 });
+  // Sem vendedor identificado não há token: nunca usar o token de outro vendedor.
+  const token = userId ? await Token.findOne({ user_id: userId }) : null;
 
   if (!token) {
     throw new HttpError(401, 'Authenticate a seller account before using Mercado Livre features.');
   }
 
+  token.access_token = decryptSecret(token.access_token);
+  token.refresh_token = decryptSecret(token.refresh_token);
   return token;
 };
 
@@ -166,8 +239,8 @@ const persistToken = async (payload: {
   const token = await Token.findOneAndUpdate(
     { user_id: userId },
     {
-      access_token: payload.access_token,
-      refresh_token: payload.refresh_token,
+      access_token: encryptSecret(payload.access_token),
+      refresh_token: encryptSecret(payload.refresh_token),
       expires_at: expiresAt,
       user_id: userId,
     },
@@ -182,6 +255,9 @@ const persistToken = async (payload: {
     throw new HttpError(500, 'Unable to persist Mercado Livre token.');
   }
 
+  // Devolve em claro só em memória, para a requisição atual.
+  token.access_token = payload.access_token;
+  token.refresh_token = payload.refresh_token;
   return token;
 };
 
@@ -342,11 +418,8 @@ export const buildFrontendRedirectUrl = (
   frontendUrlOverride?: string | null,
   sessionId?: string
 ): string | null => {
-  const frontendUrl = frontendUrlOverride || process.env.FRONTEND_URL || 'http://localhost:5173';
-
-  if (!frontendUrl) {
-    return null;
-  }
+  // Só front-ends da lista: impede redirecionar a sessão para um site de terceiros.
+  const frontendUrl = resolveFrontendUrl(frontendUrlOverride);
 
   try {
     const redirectUrl = new URL(frontendUrl);
@@ -357,7 +430,8 @@ export const buildFrontendRedirectUrl = (
     }
 
     if (sessionId) {
-      redirectUrl.searchParams.set('session_id', sessionId);
+      // No fragmento (#), a sessão não vai para logs de servidor nem para o Referer.
+      redirectUrl.hash = new URLSearchParams({ session_id: sessionId }).toString();
     }
 
     return redirectUrl.toString();

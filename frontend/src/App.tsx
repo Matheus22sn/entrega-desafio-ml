@@ -294,11 +294,12 @@ function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus>({ authenticated: false });
   const [authFeedback] = useState(() => {
     const searchParams = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
 
     return {
       state: searchParams.get('auth'),
       message: searchParams.get('message'),
-      sessionId: searchParams.get('session_id'),
+      sessionId: hashParams.get('session_id') ?? searchParams.get('session_id'),
     };
   });
   const [filters, setFilters] = useState<FiltersState>(initialFilters);

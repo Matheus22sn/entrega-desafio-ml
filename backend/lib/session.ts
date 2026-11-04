@@ -1,25 +1,17 @@
 import { randomUUID } from 'crypto';
 import type { Request } from 'express';
 import AuthSession, { IAuthSession } from '../models/AuthSession';
-import { HttpError } from './mercadoLibre';
+import { HttpError, resolveFrontendUrl } from './mercadoLibre';
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 export const SESSION_HEADER_NAME = 'x-session-id';
 
 const buildSessionExpiry = () => new Date(Date.now() + SESSION_TTL_MS);
 
-const normalizeFrontendUrl = (value: string | null | undefined): string | undefined => {
-  if (!value) {
-    return undefined;
-  }
+const PENDING_TTL_MS = 1000 * 60 * 10;
 
-  try {
-    const parsed = new URL(value.trim());
-    return parsed.toString().replace(/\/$/, '');
-  } catch {
-    return undefined;
-  }
-};
+// Aceita só front-ends da lista permitida; qualquer outro valor vira o padrão.
+const normalizeFrontendUrl = (value: string | null | undefined): string => resolveFrontendUrl(value);
 
 export const getSessionIdFromRequest = (req: Request): string | null => {
   const headerValue = req.header(SESSION_HEADER_NAME);
@@ -35,9 +27,10 @@ export const createPendingSession = async (frontendUrl?: string | null): Promise
   const sessionId = randomUUID();
   const session = await AuthSession.create({
     session_id: sessionId,
-    frontend_url: normalizeFrontendUrl(frontendUrl) ?? process.env.FRONTEND_URL ?? '',
+    frontend_url: normalizeFrontendUrl(frontendUrl),
     status: 'pending',
-    expires_at: buildSessionExpiry(),
+    // Login pendente vale 10 minutos: tempo de autorizar no Mercado Livre.
+    expires_at: new Date(Date.now() + PENDING_TTL_MS),
   });
 
   return session;
@@ -48,28 +41,25 @@ export const activateSession = async (params: {
   sellerUserId: string;
   frontendUrl?: string | null;
 }): Promise<IAuthSession> => {
-  const normalizedFrontendUrl = normalizeFrontendUrl(params.frontendUrl);
+  // Só ativa uma sessão que este servidor criou no /login, ainda pendente e dentro do prazo.
+  // Sem upsert: um state forjado ou ausente não cria sessão nova.
   const session = await AuthSession.findOneAndUpdate(
-    { session_id: params.sessionId },
+    { session_id: params.sessionId, status: 'pending', expires_at: { $gt: new Date() } },
     {
       $set: {
         seller_user_id: params.sellerUserId,
-        frontend_url: normalizedFrontendUrl ?? process.env.FRONTEND_URL ?? '',
+        frontend_url: normalizeFrontendUrl(params.frontendUrl),
         status: 'authenticated',
         expires_at: buildSessionExpiry(),
         authenticated_at: new Date(),
         last_seen_at: new Date(),
       },
     },
-    {
-      new: true,
-      upsert: true,
-      setDefaultsOnInsert: true,
-    }
+    { new: true }
   );
 
   if (!session) {
-    throw new HttpError(500, 'Unable to activate the browser session.');
+    throw new HttpError(400, 'The login attempt expired or is invalid. Start the login again.');
   }
 
   return session;

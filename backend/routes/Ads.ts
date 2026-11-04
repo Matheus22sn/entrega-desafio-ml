@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { Request, Response, Router } from 'express';
 import Ad from '../models/Ad';
-import { getValidToken, mercadoLivreRequest, HttpError, toHttpError } from '../lib/mercadoLibre';
+import { getValidToken, mercadoLivreRequest, HttpError, publicDetails, toHttpError } from '../lib/mercadoLibre';
 import { getOptionalSession, requireSession } from '../lib/session';
 
 const router = Router();
@@ -435,7 +435,9 @@ const fetchLocalAds = async (req: Request) => {
   const sort = typeof req.query.sort === 'string' ? req.query.sort.trim() : 'updated_desc';
 
   if (search) {
-    query.title = { $regex: search, $options: 'i' };
+    // Texto do usuário vira busca literal (sem metacaracteres de regex) e com tamanho limitado.
+    const literal = search.slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    query.title = { $regex: literal, $options: 'i' };
   }
 
   if (status && status !== 'all') {
@@ -626,7 +628,7 @@ const startSync = async (req: Request, res: Response) => {
     res.status(202).json(getSyncJobResponse(session.seller_user_id));
   } catch (error) {
     const httpError = toHttpError(error, 'Failed to synchronize ads with Mercado Livre.');
-    res.status(httpError.status).json({ error: httpError.message, details: httpError.details });
+    res.status(httpError.status).json({ error: httpError.message, details: publicDetails(httpError.details) });
   }
 };
 
@@ -636,7 +638,7 @@ const getSyncStatus = async (req: Request, res: Response) => {
     res.json(getSyncJobResponse(session.seller_user_id));
   } catch (error) {
     const httpError = toHttpError(error, 'Failed to load the synchronization status.');
-    res.status(httpError.status).json({ error: httpError.message, details: httpError.details });
+    res.status(httpError.status).json({ error: httpError.message, details: publicDetails(httpError.details) });
   }
 };
 
@@ -646,7 +648,7 @@ router.get('/', async (req: Request, res: Response) => {
     res.json(response);
   } catch (error) {
     const httpError = toHttpError(error, 'Failed to load local ads.');
-    res.status(httpError.status).json({ error: httpError.message, details: httpError.details });
+    res.status(httpError.status).json({ error: httpError.message, details: publicDetails(httpError.details) });
   }
 });
 
@@ -662,8 +664,11 @@ router.get('/category-predictor', async (req: Request, res: Response) => {
   }
 
   try {
+    // Exige sessão: antes a rota usava o token do último vendedor logado, sem login.
+    const session = await requireSession(req);
     const items = await mercadoLivreRequest<CategoryPredictionResponse[]>({
       method: 'GET',
+      userId: session.seller_user_id,
       url: '/sites/MLB/domain_discovery/search',
       params: {
         q: title,
@@ -681,7 +686,7 @@ router.get('/category-predictor', async (req: Request, res: Response) => {
     });
   } catch (error) {
     const httpError = toHttpError(error, 'Failed to predict categories for the provided title.');
-    res.status(httpError.status).json({ error: httpError.message, details: httpError.details });
+    res.status(httpError.status).json({ error: httpError.message, details: publicDetails(httpError.details) });
   }
 });
 
@@ -781,7 +786,7 @@ router.get('/category-context', async (req: Request, res: Response) => {
     });
   } catch (error) {
     const httpError = toHttpError(error, 'Failed to load the category context.');
-    res.status(httpError.status).json({ error: httpError.message, details: httpError.details });
+    res.status(httpError.status).json({ error: httpError.message, details: publicDetails(httpError.details) });
   }
 });
 
@@ -808,7 +813,7 @@ router.get('/listing-types', async (req: Request, res: Response) => {
     res.json({ items: listingTypesResponse.available ?? [] });
   } catch (error) {
     const httpError = toHttpError(error, 'Failed to load listing types.');
-    res.status(httpError.status).json({ error: httpError.message, details: httpError.details });
+    res.status(httpError.status).json({ error: httpError.message, details: publicDetails(httpError.details) });
   }
 });
 
@@ -842,12 +847,12 @@ router.post('/validate', async (req: Request, res: Response) => {
         valid: false,
         error: httpError.message,
         issues: Array.isArray(details.cause) ? details.cause : [],
-        details: httpError.details,
+        details: publicDetails(httpError.details),
       });
       return;
     }
 
-    res.status(httpError.status).json({ error: httpError.message, details: httpError.details });
+    res.status(httpError.status).json({ error: httpError.message, details: publicDetails(httpError.details) });
   }
 });
 
@@ -871,7 +876,7 @@ router.post('/', async (req: Request, res: Response) => {
     res.status(201).json(storedItem);
   } catch (error) {
     const httpError = toHttpError(error, 'Failed to create the ad on Mercado Livre.');
-    res.status(httpError.status).json({ error: httpError.message, details: httpError.details });
+    res.status(httpError.status).json({ error: httpError.message, details: publicDetails(httpError.details) });
   }
 });
 
@@ -941,7 +946,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     res.json(storedItem);
   } catch (error) {
     const httpError = toHttpError(error, 'Failed to update the ad on Mercado Livre.');
-    res.status(httpError.status).json({ error: httpError.message, details: httpError.details });
+    res.status(httpError.status).json({ error: httpError.message, details: publicDetails(httpError.details) });
   }
 });
 

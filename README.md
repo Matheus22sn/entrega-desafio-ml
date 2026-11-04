@@ -15,6 +15,19 @@ Este projeto foi desenvolvido para atender ao desafio tecnico de uma vaga full s
 - persistencia local com MongoDB
 - tratamento basico de concorrencia e divergencia entre cache local e marketplace
 
+## Seguranca
+
+Revisao de seguranca aplicada em nov/2026:
+
+- **OAuth com state validado:** o callback so ativa uma sessao criada pelo proprio `/login`, ainda pendente e dentro de 10 minutos. Sem `state` valido, o login e recusado (antes caia num id previsivel).
+- **Redirecionamento so para front-ends conhecidos:** o retorno do login aceita apenas as origens de `FRONTEND_URL` e `CORS_ORIGIN`, e o `session_id` vai no fragmento (`#`), fora de logs e do `Referer`.
+- **Tokens cifrados no banco:** `access_token` e `refresh_token` ficam em AES-256-GCM (chave em `TOKEN_ENCRYPTION_KEY` ou derivada do `ML_SECRET_KEY`).
+- **Token sempre do vendedor da sessao:** nenhuma rota usa o token de outro vendedor; o preditor de categoria passou a exigir sessao.
+- **CORS fechado por padrao**, cabecalhos de seguranca com `helmet` e limite de requisicoes por IP (`express-rate-limit`), mais rigido no login.
+- **Busca literal:** o texto da busca e escapado antes de virar `$regex`, evitando ReDoS.
+- **Erros sem detalhes internos** quando `NODE_ENV=production`.
+- **Dependencias:** `npm audit` sem vulnerabilidades no back-end; no front-end restam alertas moderados so em ferramentas de build.
+
 ## Links de producao
 
 - Frontend: [https://desafio-ml.vercel.app](https://desafio-ml.vercel.app)

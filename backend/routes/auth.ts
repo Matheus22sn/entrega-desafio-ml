@@ -7,6 +7,7 @@ import {
   exchangeAuthCode,
   getValidToken,
   mercadoLivreRequest,
+  publicDetails,
   toHttpError,
 } from '../lib/mercadoLibre';
 import { activateSession, createPendingSession, destroySession, requireSession } from '../lib/session';
@@ -25,7 +26,7 @@ router.get('/login', async (req: Request, res: Response) => {
     res.json({ url: buildMercadoLivreAuthUrlWithState(state) });
   } catch (error) {
     const httpError = toHttpError(error, 'Unable to create the Mercado Livre authorization URL.');
-    res.status(httpError.status).json({ error: httpError.message, details: httpError.details });
+    res.status(httpError.status).json({ error: httpError.message, details: publicDetails(httpError.details) });
   }
 });
 
@@ -40,10 +41,21 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
+  // Sem state válido não existe sessão para ativar (antes caía num id previsível).
+  if (!sessionIdFromState) {
+    const redirectUrl = buildFrontendRedirectUrl('error', 'Invalid login state. Start the login again.', frontendUrlFromState);
+    if (redirectUrl) {
+      res.redirect(redirectUrl);
+      return;
+    }
+    res.status(400).json({ error: 'Invalid login state. Start the login again.' });
+    return;
+  }
+
   try {
     const token = await exchangeAuthCode(code);
     const activeSession = await activateSession({
-      sessionId: sessionIdFromState || `fallback-${token.user_id}`,
+      sessionId: sessionIdFromState,
       sellerUserId: String(token.user_id),
       frontendUrl: frontendUrlFromState,
     });
@@ -73,7 +85,7 @@ router.get('/callback', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    res.status(httpError.status).json({ error: httpError.message, details: httpError.details });
+    res.status(httpError.status).json({ error: httpError.message, details: publicDetails(httpError.details) });
   }
 });
 
@@ -113,7 +125,7 @@ router.get('/status', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    res.status(httpError.status).json({ error: httpError.message, details: httpError.details });
+    res.status(httpError.status).json({ error: httpError.message, details: publicDetails(httpError.details) });
   }
 });
 
@@ -146,7 +158,7 @@ router.get('/me', async (req: Request, res: Response): Promise<void> => {
     });
   } catch (error) {
     const httpError = toHttpError(error, 'Unable to load the seller profile.');
-    res.status(httpError.status).json({ error: httpError.message, details: httpError.details });
+    res.status(httpError.status).json({ error: httpError.message, details: publicDetails(httpError.details) });
   }
 });
 
